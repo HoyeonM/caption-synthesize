@@ -67,6 +67,7 @@ You MUST depict the place of the image whether it's indoor or outdoor.
 
 The RESPONSE MUST end with "the rating is <RATING>.".
 """
+
 TAGS_TEMPLATE = r"""
 TAGS:
 copyright: touhou
@@ -104,14 +105,13 @@ The character depicted is Hijiri Byakuren from the Touhou series. She is a solo 
 # The image depicts cowboy shot of the character Patchouli Knowledge from the Touhou series, featuring solo 1girl holding a brown thick book, standing in a library. She is depicted with very long purple hair with blunt bangs and purple eyes, wearing a pink gown with purple dress like pajamas with long sleeves and vertical stripes, a frilled capelet, and wearing a hat, mob_cap with a crescent hat_ornament. Notably, she is adorned with a red ribbon and a crescent moon motif hair ornament, suggesting her magical affinities. She is also wearing a white shirts and red necktie, looking at the viewer. Blue ribbons are partially shown with hair. The illustration shows indoors, bookshelves filled with various books, associating her with a scholarly theme. The rating is general.
 # """
 
-
-
-def format_missing_tags(sanity_check_result):
+def format_missing_tags(previous_response, sanity_check_result):
     """
     Format the missing tags.
     """
     return f"""
-    These were the tags which was not included in the response, please include them in the response.
+    These were the tags which was not included in the PREVIOUS_RESPONSE, you MUST include these MISSING_TAGS in the response.
+    PREVIOUS_RESPONSE: {previous_response}
     MISSING_TAGS: {sanity_check_result}
 
     REFINED RESPONSE:
@@ -178,7 +178,7 @@ def sanity_check(tags, result):
     tags_not_in_caption = [t for t in tags if t.lower() not in result.lower() and t not in excluded_tags] 
     # if tags_not_in_caption:
     #     return " ".join(tags_not_in_caption)
-    return len(tags_not_in_caption) if tags_not_in_caption else None
+    return tags_not_in_caption
 
 
 def merge_strings(strings_or_images:List[Union[str, Image.Image]]) -> str:
@@ -201,7 +201,8 @@ def merge_strings(strings_or_images:List[Union[str, Image.Image]]) -> str:
         result_container.append(previous_string)
     return result_container
 
-def generate_text(image_path, return_input=False):
+
+def generate_text(image_path, return_input=False, previous_result=None):
     """
     Generate text from the given image and tags.
     We assume we have the tags in the same directory as the image. as filename.txt
@@ -213,75 +214,74 @@ def generate_text(image_path, return_input=False):
         TAGS_TEMPLATE, # tags example 1
         image_inference(), # image example 1
         TEMPLATE_RESULT, # result example 1
-        
         tags_formatted(image_path), # tags given
         image_inference(image_path), # image given
         "RESPONSE INCLUDES ALL GIVEN TAGS:", # now generate
     ]
-    inputs = merge_strings(inputs)
-    #print(inputs)
-    # previous_result = None
-    # image_extension = pathlib.Path(image_path).suffix
-    # if os.path.exists(image_path.replace(image_extension, '_gemini.txt')):
-    #     if not REFINE_ALLOWED:
-    #         raise FileExistsError(f"Refinement is not allowed, but {image_path.replace(image_extension, '_gemini.txt')} exists!")
-    #     with open(image_path.replace(image_extension, '_gemini.txt'), 'r',encoding='utf-8') as f:
-    #         try:
-    #             previous_result = f.read()
-    #         except:
-    #             print(f"Error occured while reading {image_path.replace(image_extension, '_gemini.txt')}")
-    #             print("Please check the file and try again.")
-    #             previous_result = None
-    # if REFINE_ALLOWED:
-    #     if previous_result is not None:
-    #         print(f"Executing refinement for {image_path}")
-    #         inputs.append(previous_result)
-    #         sanity_check_result = (sanity_check(tags_formatted(image_path), previous_result))
-    #         if sanity_check_result is None:
-    #             return previous_result # no need to generate
-    #         inputs.append(format_missing_tags(sanity_check_result))
-    #     # concat strings
-    #     inputs_refined = [inputs[0]]
-    #     for i in inputs[1:]:
-    #         if isinstance(i, str) and isinstance(inputs_refined[-1], str):
-    #             inputs_refined[-1] += i
-    #         else:
-    #             inputs_refined.append(i)
-    #     inputs = inputs_refined
-    
+
+    if previous_result is not None:
+        print("Previous result found, checking sanity...")
+        tags_not_in_caption = sanity_check(tags_formatted(image_path), previous_result)
+        if tags_not_in_caption:
+            inputs.append(format_missing_tags(previous_result, tags_not_in_caption))
+            inputs = merge_strings(inputs)
+            try:
+                response = setup_model().generate_content(
+                    inputs,
+                    stream=True,
+                    safety_settings =   [{
+                        "category": "HARM_CATEGORY_HARASSMENT",
+                        "threshold": "BLOCK_NONE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_HATE_SPEECH",
+                            "threshold": "BLOCK_NONE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                            "threshold": "BLOCK_NONE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                            "threshold": "BLOCK_NONE"
+                        }]
+                )
+                response.resolve()
+                previous_result = response.text
+            except Exception as e:
+                print(f"Error occured while generating text for {image_path}!")
+                # print(f"Inputs: {inputs}")
+                print(e)
+                if isinstance(e, KeyboardInterrupt):
+                    raise e
+
+            return previous_result
+        
+        else:
+            print(f"No need to generate for {image_path}. 0 sanity")
+            return previous_result if return_input else None
+    else:    
+        print(f"No previous result found for {image_path}, generating for the first time...")
+        inputs = merge_strings(inputs)
     try:
         response = setup_model().generate_content(
             inputs,
             stream=True,
-            safety_settings =   [{
-                "category": "HARM_CATEGORY_HARASSMENT",
-                "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    "threshold": "BLOCK_NONE"
-                }]
+            safety_settings=[
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ],
         )
         response.resolve()
-        
+        previous_result = response.text
     except Exception as e:
-        print(f"Error occured while generating text for {image_path}!")
-        # print(f"Inputs: {inputs}")
-        print(e)
+        print(f"Error occurred while generating text for {image_path}! {e}")
         if isinstance(e, KeyboardInterrupt):
             raise e
 
-    if return_input:
-        return response, inputs
-    return response.text
+    return previous_result 
 
 def query_gemini(path:str, extension:str = '.png'):
     """
@@ -304,35 +304,27 @@ def query_gemini_file(image_path:str, optional_progress_bar:tqdm.tqdm = None, ma
     sanity_count_list = []
     for attempt in range (max_retries + 1):
         try:
-            text1 = generate_text(image_path, False)
-            text2 = generate_text(image_path, False)
-            text3 = generate_text(image_path, False)
-            text4 = generate_text(image_path, False)
-            text5 = generate_text(image_path, False)
-            text1_sanity_count = sanity_check(tags_formatted(image_path), text1)
-            text2_sanity_count = sanity_check(tags_formatted(image_path), text2)
-            text3_sanity_count = sanity_check(tags_formatted(image_path), text3)
-            text4_sanity_count = sanity_check(tags_formatted(image_path), text4)
-            text5_sanity_count = sanity_check(tags_formatted(image_path), text5)
+            text1 = generate_text(image_path, return_input=True, previous_result=None)
+            print("first text generated")
+            text2 = generate_text(image_path, return_input=True, previous_result=text1)
+            print("second text generated")
+            text3 = generate_text(image_path, return_input=True, previous_result=text2)
+            print("third text generated")
             
-            sanity_count_list.append(text1_sanity_count)
-            sanity_count_list.append(text2_sanity_count)
-            sanity_count_list.append(text3_sanity_count)
-            sanity_count_list.append(text4_sanity_count)
-            sanity_count_list.append(text5_sanity_count)
+            text1_sanity_check = sanity_check(tags_formatted(image_path), text1)
+            text2_sanity_check = sanity_check(tags_formatted(image_path), text2)
+            text3_sanity_check = sanity_check(tags_formatted(image_path), text3)
             
-            # find minimum
+            sanity_count_list = [len(text1_sanity_check), len(text2_sanity_check), len(text3_sanity_check)]
             least_sanity_count = min(sanity_count_list)
-            if least_sanity_count == text1_sanity_count:
+            
+            if least_sanity_count == len(text1_sanity_check):
                 best_text = text1
-            elif least_sanity_count == text2_sanity_count:
+            elif least_sanity_count == len(text2_sanity_check):
                 best_text = text2
-            elif least_sanity_count == text3_sanity_count:
+            elif least_sanity_count == len(text3_sanity_check):
                 best_text = text3
-            elif least_sanity_count == text4_sanity_count:
-                best_text = text4
-            elif least_sanity_count == text5_sanity_count:
-                best_text = text5
+
             # import pdb; pdb.set_trace() 
             if best_text is not None:
                 with open(image_path.replace(extension, '_gemini.txt'), 'w', encoding='utf-8') as f:
