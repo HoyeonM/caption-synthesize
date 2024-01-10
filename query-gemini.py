@@ -110,9 +110,9 @@ def format_missing_tags(previous_response, sanity_check_result):
     Format the missing tags.
     """
     return f"""
-    These were the tags which was not included in the PREVIOUS_RESPONSE, you MUST include these MISSING_TAGS in the response.
     PREVIOUS_RESPONSE: {previous_response}
     MISSING_TAGS: {sanity_check_result}
+    These were the tags which was not included in the PREVIOUS_RESPONSE, you MUST include these MISSING_TAGS in the REFINED RESPONSE.
 
     REFINED RESPONSE:
     """
@@ -325,7 +325,6 @@ def query_gemini_file(image_path:str, optional_progress_bar:tqdm.tqdm = None, ma
             elif least_sanity_count == len(text3_sanity_check):
                 best_text = text3
 
-            # import pdb; pdb.set_trace() 
             if best_text is not None:
                 with open(image_path.replace(extension, '_gemini.txt'), 'w', encoding='utf-8') as f:
                     f.write(best_text)
