@@ -15,7 +15,7 @@ def load_secret(api_key=None, path=None, ext=None, threaded=None, sleep_time=Non
     Load the secret.json file and configure the genai.
     Also tries to load the env.json file.
     """
-    if api_key is None:
+    if not api_key:
         with open('secret.json', 'r',encoding='utf-8') as f:
             secrets = json.load(f)
         GOOGLE_API_KEY = secrets['GOOGLE_API_KEY']
@@ -402,7 +402,7 @@ if __name__ == '__main__':
     # single file
     parser.add_argument('--single-file', type=str, help='If given, query single file')
     parser.add_argument('--ext', type=str, default='.png', help='File extension of the image')
-    parser.add_argument('--api_key', type=str, default=None, help='Google API Key')
+    parser.add_argument('--api_key', type=str, default="", help='Google API Key')
     parser.add_argument('--threaded', action='store_true', help='Use threaded version')
     parser.add_argument('--max_threads', type=int, default=8, help='Max threads to use')
     parser.add_argument('--sleep_time', type=float, default=1.1, help='Sleep time between threads')
