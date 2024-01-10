@@ -15,7 +15,7 @@ def load_secret(api_key=None, path=None, ext=None, threaded=None, sleep_time=Non
     Load the secret.json file and configure the genai.
     Also tries to load the env.json file.
     """
-    if api_key is None:
+    if not api_key:
         with open('secret.json', 'r',encoding='utf-8') as f:
             secrets = json.load(f)
         GOOGLE_API_KEY = secrets['GOOGLE_API_KEY']
@@ -25,6 +25,7 @@ def load_secret(api_key=None, path=None, ext=None, threaded=None, sleep_time=Non
         # OpenAI API Key
     else:
         genai.configure(api_key=api_key)
+
     # load some defaults from the env.json
     if load_env:
         env = {}
@@ -66,6 +67,7 @@ You MUST depict the place of the image whether it's indoor or outdoor.
 
 The RESPONSE MUST end with "the rating is <RATING>.".
 """
+
 TAGS_TEMPLATE = r"""
 TAGS:
 copyright: touhou
@@ -103,14 +105,13 @@ The character depicted is Hijiri Byakuren from the Touhou series. She is a solo 
 # The image depicts cowboy shot of the character Patchouli Knowledge from the Touhou series, featuring solo 1girl holding a brown thick book, standing in a library. She is depicted with very long purple hair with blunt bangs and purple eyes, wearing a pink gown with purple dress like pajamas with long sleeves and vertical stripes, a frilled capelet, and wearing a hat, mob_cap with a crescent hat_ornament. Notably, she is adorned with a red ribbon and a crescent moon motif hair ornament, suggesting her magical affinities. She is also wearing a white shirts and red necktie, looking at the viewer. Blue ribbons are partially shown with hair. The illustration shows indoors, bookshelves filled with various books, associating her with a scholarly theme. The rating is general.
 # """
 
-
-
-def format_missing_tags(sanity_check_result):
+def format_missing_tags(previous_response, sanity_check_result):
     """
     Format the missing tags.
     """
     return f"""
-    These were the tags which was not included in the response, please include them in the response.
+    These were the tags which was not included in the PREVIOUS_RESPONSE, you MUST include these MISSING_TAGS in the response.
+    PREVIOUS_RESPONSE: {previous_response}
     MISSING_TAGS: {sanity_check_result}
 
     REFINED RESPONSE:
@@ -177,7 +178,8 @@ def sanity_check(tags, result):
     tags_not_in_caption = [t for t in tags if t.lower() not in result.lower() and t not in excluded_tags] 
     # if tags_not_in_caption:
     #     return " ".join(tags_not_in_caption)
-    return len(tags_not_in_caption) if tags_not_in_caption else None
+    return tags_not_in_caption
+
 
 def merge_strings(strings_or_images:List[Union[str, Image.Image]]) -> str:
     """
@@ -199,7 +201,8 @@ def merge_strings(strings_or_images:List[Union[str, Image.Image]]) -> str:
         result_container.append(previous_string)
     return result_container
 
-def generate_text(image_path, return_input=False):
+
+def generate_text(image_path, return_input=False, previous_result=None):
     """
     Generate text from the given image and tags.
     We assume we have the tags in the same directory as the image. as filename.txt
@@ -211,81 +214,80 @@ def generate_text(image_path, return_input=False):
         TAGS_TEMPLATE, # tags example 1
         image_inference(), # image example 1
         TEMPLATE_RESULT, # result example 1
-        
         tags_formatted(image_path), # tags given
         image_inference(image_path), # image given
         "RESPONSE INCLUDES ALL GIVEN TAGS:", # now generate
     ]
-    inputs = merge_strings(inputs)
-    #print(inputs)
-    # previous_result = None
-    # image_extension = pathlib.Path(image_path).suffix
-    # if os.path.exists(image_path.replace(image_extension, '_gemini.txt')):
-    #     if not REFINE_ALLOWED:
-    #         raise FileExistsError(f"Refinement is not allowed, but {image_path.replace(image_extension, '_gemini.txt')} exists!")
-    #     with open(image_path.replace(image_extension, '_gemini.txt'), 'r',encoding='utf-8') as f:
-    #         try:
-    #             previous_result = f.read()
-    #         except:
-    #             print(f"Error occured while reading {image_path.replace(image_extension, '_gemini.txt')}")
-    #             print("Please check the file and try again.")
-    #             previous_result = None
-    # if REFINE_ALLOWED:
-    #     if previous_result is not None:
-    #         print(f"Executing refinement for {image_path}")
-    #         inputs.append(previous_result)
-    #         sanity_check_result = (sanity_check(tags_formatted(image_path), previous_result))
-    #         if sanity_check_result is None:
-    #             return previous_result # no need to generate
-    #         inputs.append(format_missing_tags(sanity_check_result))
-    #     # concat strings
-    #     inputs_refined = [inputs[0]]
-    #     for i in inputs[1:]:
-    #         if isinstance(i, str) and isinstance(inputs_refined[-1], str):
-    #             inputs_refined[-1] += i
-    #         else:
-    #             inputs_refined.append(i)
-    #     inputs = inputs_refined
-    
+
+    if previous_result is not None:
+        print("Previous result found, checking sanity...")
+        tags_not_in_caption = sanity_check(tags_formatted(image_path), previous_result)
+        if tags_not_in_caption:
+            inputs.append(format_missing_tags(previous_result, tags_not_in_caption))
+            inputs = merge_strings(inputs)
+            try:
+                response = setup_model().generate_content(
+                    inputs,
+                    stream=True,
+                    safety_settings =   [{
+                        "category": "HARM_CATEGORY_HARASSMENT",
+                        "threshold": "BLOCK_NONE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_HATE_SPEECH",
+                            "threshold": "BLOCK_NONE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                            "threshold": "BLOCK_NONE"
+                        },
+                        {
+                            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                            "threshold": "BLOCK_NONE"
+                        }]
+                )
+                response.resolve()
+                previous_result = response.text
+            except Exception as e:
+                print(f"Error occured while generating text for {image_path}!")
+                # print(f"Inputs: {inputs}")
+                print(e)
+                if isinstance(e, KeyboardInterrupt):
+                    raise e
+
+            return previous_result
+        
+        else:
+            print(f"No need to generate for {image_path}. 0 sanity")
+            return previous_result if return_input else None
+    else:    
+        print(f"No previous result found for {image_path}, generating for the first time...")
+        inputs = merge_strings(inputs)
     try:
         response = setup_model().generate_content(
             inputs,
             stream=True,
-            safety_settings =   [{
-                "category": "HARM_CATEGORY_HARASSMENT",
-                "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_HATE_SPEECH",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                    "threshold": "BLOCK_NONE"
-                },
-                {
-                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    "threshold": "BLOCK_NONE"
-                }]
+            safety_settings=[
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+            ],
         )
         response.resolve()
-        
+        previous_result = response.text
     except Exception as e:
-        print(f"Error occured while generating text for {image_path}!")
-        # print(f"Inputs: {inputs}")
-        print(e)
+        print(f"Error occurred while generating text for {image_path}! {e}")
         if isinstance(e, KeyboardInterrupt):
             raise e
 
-    if return_input:
-        return response, inputs
-    return response.text
+    return previous_result 
 
 def query_gemini(path:str, extension:str = '.png'):
     """
     Query gemini with the given image path.
     """
-    files = glob.glob(os.path.join(path, f'*{extension}'))
+    files = load_paths(path, extension)
     if not files:
         print(f"No files found for {os.path.join(path, f'*{extension}')}!")
         return
@@ -302,35 +304,27 @@ def query_gemini_file(image_path:str, optional_progress_bar:tqdm.tqdm = None, ma
     sanity_count_list = []
     for attempt in range (max_retries + 1):
         try:
-            text1 = generate_text(image_path, False)
-            text2 = generate_text(image_path, False)
-            text3 = generate_text(image_path, False)
-            text4 = generate_text(image_path, False)
-            text5 = generate_text(image_path, False)
-            text1_sanity_count = sanity_check(tags_formatted(image_path), text1)
-            text2_sanity_count = sanity_check(tags_formatted(image_path), text2)
-            text3_sanity_count = sanity_check(tags_formatted(image_path), text3)
-            text4_sanity_count = sanity_check(tags_formatted(image_path), text4)
-            text5_sanity_count = sanity_check(tags_formatted(image_path), text5)
+            text1 = generate_text(image_path, return_input=True, previous_result=None)
+            print("first text generated")
+            text2 = generate_text(image_path, return_input=True, previous_result=text1)
+            print("second text generated")
+            text3 = generate_text(image_path, return_input=True, previous_result=text2)
+            print("third text generated")
             
-            sanity_count_list.append(text1_sanity_count)
-            sanity_count_list.append(text2_sanity_count)
-            sanity_count_list.append(text3_sanity_count)
-            sanity_count_list.append(text4_sanity_count)
-            sanity_count_list.append(text5_sanity_count)
+            text1_sanity_check = sanity_check(tags_formatted(image_path), text1)
+            text2_sanity_check = sanity_check(tags_formatted(image_path), text2)
+            text3_sanity_check = sanity_check(tags_formatted(image_path), text3)
             
-            # find minimum
+            sanity_count_list = [len(text1_sanity_check), len(text2_sanity_check), len(text3_sanity_check)]
             least_sanity_count = min(sanity_count_list)
-            if least_sanity_count == text1_sanity_count:
+            
+            if least_sanity_count == len(text1_sanity_check):
                 best_text = text1
-            elif least_sanity_count == text2_sanity_count:
+            elif least_sanity_count == len(text2_sanity_check):
                 best_text = text2
-            elif least_sanity_count == text3_sanity_count:
+            elif least_sanity_count == len(text3_sanity_check):
                 best_text = text3
-            elif least_sanity_count == text4_sanity_count:
-                best_text = text4
-            elif least_sanity_count == text5_sanity_count:
-                best_text = text5
+
             # import pdb; pdb.set_trace() 
             if best_text is not None:
                 with open(image_path.replace(extension, '_gemini.txt'), 'w', encoding='utf-8') as f:
@@ -363,7 +357,7 @@ def query_gemini_threaded(path:str, extension:str = '.png', sleep_time:float = 1
     Query gemini with the given image path.
     For all extensions, use extension='.*'
     """
-    files = glob.glob(os.path.join(path, f'*{extension}'))
+    files = load_paths(path, extension)
     # exclude files that ends with txt or json
     files = [f for f in files if not f.endswith('.txt') and not f.endswith('.json')]
     if not files:
@@ -376,13 +370,31 @@ def query_gemini_threaded(path:str, extension:str = '.png', sleep_time:float = 1
             executor.submit(query_gemini_file, file, pbar)
             time.sleep(sleep_time)
 
+def load_paths(string:str, extension:str=".png") -> List[str]:
+    """
+    Loads paths from the given string.
+    """
+    if os.path.isfile(string):
+        # handle txt
+        if string.endswith('.txt'):
+            with open(string, 'r',encoding='utf-8') as f:
+                paths = f.read().split('\n')
+        # handle json
+        elif string.endswith('.json'):
+            with open(string, 'r',encoding='utf-8') as f:
+                paths = json.load(f)
+    else:
+        paths = glob.glob(os.path.join(string, f'*{extension}'))
+    return paths
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', type=str, default=None, help='Path to the images folder')
     # single file
     parser.add_argument('--single-file', type=str, help='If given, query single file')
     parser.add_argument('--ext', type=str, default='.png', help='File extension of the image')
-    parser.add_argument('--api_key', type=str, default=None, help='Google API Key')
+    parser.add_argument('--api_key', type=str, default="", help='Google API Key')
     parser.add_argument('--threaded', action='store_true', help='Use threaded version')
     parser.add_argument('--max_threads', type=int, default=8, help='Max threads to use')
     parser.add_argument('--sleep_time', type=float, default=1.1, help='Sleep time between threads')
