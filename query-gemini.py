@@ -25,6 +25,7 @@ def load_secret(api_key=None, path=None, ext=None, threaded=None, sleep_time=Non
         # OpenAI API Key
     else:
         genai.configure(api_key=api_key)
+
     # load some defaults from the env.json
     if load_env:
         env = {}
@@ -179,6 +180,7 @@ def sanity_check(tags, result):
     #     return " ".join(tags_not_in_caption)
     return len(tags_not_in_caption) if tags_not_in_caption else None
 
+
 def merge_strings(strings_or_images:List[Union[str, Image.Image]]) -> str:
     """
     Merge strings or images into one string.
@@ -285,7 +287,7 @@ def query_gemini(path:str, extension:str = '.png'):
     """
     Query gemini with the given image path.
     """
-    files = glob.glob(os.path.join(path, f'*{extension}'))
+    files = load_paths(path, extension)
     if not files:
         print(f"No files found for {os.path.join(path, f'*{extension}')}!")
         return
@@ -363,7 +365,7 @@ def query_gemini_threaded(path:str, extension:str = '.png', sleep_time:float = 1
     Query gemini with the given image path.
     For all extensions, use extension='.*'
     """
-    files = glob.glob(os.path.join(path, f'*{extension}'))
+    files = load_paths(path, extension)
     # exclude files that ends with txt or json
     files = [f for f in files if not f.endswith('.txt') and not f.endswith('.json')]
     if not files:
@@ -375,6 +377,24 @@ def query_gemini_threaded(path:str, extension:str = '.png', sleep_time:float = 1
         for file in files:
             executor.submit(query_gemini_file, file, pbar)
             time.sleep(sleep_time)
+
+def load_paths(string:str, extension:str=".png") -> List[str]:
+    """
+    Loads paths from the given string.
+    """
+    if os.path.isfile(string):
+        # handle txt
+        if string.endswith('.txt'):
+            with open(string, 'r',encoding='utf-8') as f:
+                paths = f.read().split('\n')
+        # handle json
+        elif string.endswith('.json'):
+            with open(string, 'r',encoding='utf-8') as f:
+                paths = json.load(f)
+    else:
+        paths = glob.glob(os.path.join(string, f'*{extension}'))
+    return paths
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
